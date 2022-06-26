@@ -4,21 +4,27 @@ import jakarta.servlet.Servlet;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.container.ResourceContext;
 import jakarta.ws.rs.core.*;
-import jakarta.ws.rs.ext.ExceptionMapper;
 import jakarta.ws.rs.ext.MessageBodyWriter;
 import jakarta.ws.rs.ext.Providers;
 import jakarta.ws.rs.ext.RuntimeDelegate;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestFactory;
 import org.mockito.Mockito;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.net.http.HttpResponse;
+import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -127,11 +133,155 @@ class ResourceServletTest extends ServletTest {
         assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
     }
 
+    @Test
+    public void should_not_call_message_body_writer_if_entity_is_null() throws Exception {
+        response.entity(null, new Annotation[0]).returnFrom(router);
+        HttpResponse<String> httpResponse = get("/test");
+
+        assertEquals(Response.Status.OK.getStatusCode(), httpResponse.statusCode());
+        assertEquals("", httpResponse.body());
+    }
+
+    @Test
+    public void should_use_response_from_web_application_exception_thrown_by_exception_mapper() throws  Exception {
+        when(router.dispatch(any(), eq(resourceContext))).thenThrow(RuntimeException.class);
+        when(providers.getExceptionMapper(eq(RuntimeException.class)))
+                .thenReturn(exception -> {
+                    throw new WebApplicationException(response.status(Response.Status.FORBIDDEN).build());
+                });
+        HttpResponse<String> httpResponse = get("/test");
+        assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
+
+    }
+
+    @Test
+    public void should_map_exception_thrown_by_exception_mapper() throws Exception {
+        when(router.dispatch(any(), eq(resourceContext))).thenThrow(RuntimeException.class);
+        when(providers.getExceptionMapper(eq(RuntimeException.class)))
+                .thenReturn(exception -> {
+                    throw new IllegalArgumentException();
+                });
+        when(providers.getExceptionMapper(eq(IllegalArgumentException.class)))
+                .thenReturn(exception -> response.status(Response.Status.FORBIDDEN).build());
+
+        HttpResponse<String> httpResponse = get("/test");
+        assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
+    }
+
+    @ExceptionThrownFrom
+    private void providers_getMessageBodyWriter(RuntimeException exception) {
+        response.entity(new GenericEntity<>(2.5, Double.class), new Annotation[0]).returnFrom(router);
+        when(providers.getMessageBodyWriter(eq(Double.class), eq(Double.class), eq(new Annotation[0]), eq(MediaType.TEXT_PLAIN_TYPE)))
+                .thenThrow(exception);
+    }
+/*
+    @Test
+    public void should_use_response_from_web_application_exception_thrown_by_providers_when_find_message_body_writer() throws Exception {
+        webApplicationExceptionThrownFrom(this::providers_getMessageBodyWriter);
+    }
+
+    @Test
+    public void should_use_response_from_web_application_exception_thrown_by_message_body_writer() throws Exception {
+        webApplicationExceptionThrownFrom(this::messageBodyWriter_writeTo);
+    }
+
+    @Test
+    public void should_map_exception_thrown_by_provides_when_find_message_body_writer() {
+        otherExceptionTrownFrom(this::providers_getMessageBodyWriter);
+    }
+
+    @Test
+    public void should_map_exception_thrown_by_message_body_writer() {
+        otherExceptionTrownFrom(this::messageBodyWriter_writeTo);
+    }*/
+
+    @TestFactory
+    public List<DynamicTest> should_respond_based_on_exception_thrown() {
+        List<DynamicTest> tests = new ArrayList<>();
+
+        Map<String, Consumer<Consumer<RuntimeException>>> exceptions = Map.of("Other Exception", this::otherExceptionTrownFrom,
+                "WebApplicaitonException", this::webApplicationExceptionThrownFrom);
+        Map<String, Consumer<RuntimeException>> callers = getCallers();
+
+        for (Map.Entry<String,Consumer<RuntimeException>> caller : callers.entrySet()) {
+            for (Map.Entry<String, Consumer<Consumer<RuntimeException>>> exceptionThrownFrom : exceptions.entrySet()) {
+                tests.add(DynamicTest.dynamicTest(caller.getKey() + " throws " + exceptionThrownFrom.getKey(),
+                        () -> exceptionThrownFrom.getValue().accept(caller.getValue())));
+            }
+        }
+        return tests;
+    }
+
+    private Map<String, Consumer<RuntimeException>> getCallers() {
+        Map<String, Consumer<RuntimeException>> callers = new HashMap<>();
+
+        for (Method method : Arrays.stream(this.getClass().getDeclaredMethods())
+                .filter(m -> m.isAnnotationPresent(ExceptionThrownFrom.class)).toList()) {
+            String name = method.getName();
+            String callerName = name.substring(0, 1).toUpperCase() + name.substring(1).replace('_', '.');
+            callers.put(callerName, e -> {
+               try {
+                   method.invoke(this, e);
+               } catch (Exception ex) {
+                   throw new RuntimeException(ex);
+               }
+            });
+
+        }
+        return callers;
+//        return Map.of("Providers.getMessageBodyWriter", this::providers_getMessageBodyWriter,
+//                "MessageBodyWriter.writerTo", this::messageBodyWriter_writeTo);
+    }
+
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface ExceptionThrownFrom {
+    }
+
+
+    private void otherExceptionTrownFrom(Consumer<RuntimeException> caller) {
+        RuntimeException exception = new IllegalArgumentException();
+
+        caller.accept(exception);
+
+        when(providers.getExceptionMapper(eq(IllegalArgumentException.class))).thenReturn(e -> new OutboundResponseBuilder().status(Response.Status.FORBIDDEN).build());
+
+        HttpResponse<String> httpResponse = get("/test");
+
+        assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
+    }
+
+    private void webApplicationExceptionThrownFrom(Consumer<RuntimeException> caller) {
+        RuntimeException exception = new WebApplicationException(new OutboundResponseBuilder().status(Response.Status.FORBIDDEN).build());
+
+        caller.accept(exception);
+
+        HttpResponse<String> httpResponse = get("/test");
+
+        assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
+    }
+
+    @ExceptionThrownFrom
+    private void messageBodyWriter_writeTo(RuntimeException exception) {
+        response.entity(new GenericEntity<>(2.5, Double.class), new Annotation[0]).returnFrom(router);
+        when(providers.getMessageBodyWriter(eq(Double.class), eq(Double.class), eq(new Annotation[0]), eq(MediaType.TEXT_PLAIN_TYPE)))
+                .thenReturn(new MessageBodyWriter<Double>() {
+                    @Override
+                    public boolean isWriteable(Class<?> aClass, Type type, Annotation[] annotations, MediaType mediaType) {
+                        return false;
+                    }
+
+                    @Override
+                    public void writeTo(Double aDouble, Class<?> aClass, Type type, Annotation[] annotations, MediaType mediaType, MultivaluedMap<String, Object> multivaluedMap, OutputStream outputStream) throws IOException, WebApplicationException {
+                        throw exception;
+                    }
+                });
+    }
+
 
     class OutboundResponseBuilder {
         Response.Status status = Response.Status.OK;
         MultivaluedMap<String, Object> headers = new MultivaluedHashMap<>();
-        GenericEntity<String> entity = new GenericEntity<>("entity", String.class);
+        GenericEntity<Object> entity = new GenericEntity<>("entity", String.class);
         Annotation[] annotations = new Annotation[0];
         MediaType mediaType = MediaType.TEXT_PLAIN_TYPE;
 
@@ -145,7 +295,7 @@ class ResourceServletTest extends ServletTest {
             return this;
         }
 
-        public OutboundResponseBuilder entity(GenericEntity<String> entity, Annotation[] annotations) {
+        public OutboundResponseBuilder entity(GenericEntity<Object> entity, Annotation[] annotations) {
             this.entity = entity;
             this.annotations = annotations;
             return this;
