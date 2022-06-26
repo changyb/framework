@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.function.Executable;
 import org.mockito.Mockito;
 
 import java.io.IOException;
@@ -24,7 +25,6 @@ import java.lang.reflect.Type;
 import java.net.http.HttpResponse;
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -167,6 +167,37 @@ class ResourceServletTest extends ServletTest {
         HttpResponse<String> httpResponse = get("/test");
         assertEquals(Response.Status.FORBIDDEN.getStatusCode(), httpResponse.statusCode());
     }
+
+
+    @TestFactory
+    public List<DynamicTest> RespondWhenExtensionMissing() {
+        List tests = new ArrayList<>();
+        Map<String, Executable> extensions = Map.of(
+                "MessageBodyWriter", () -> new OutboundResponseBuilder().entity(new GenericEntity<>(1, Integer.class), new Annotation[0]).returnFrom(router),
+                "HeaderDelegate", () -> new OutboundResponseBuilder().headers(HttpHeaders.DATE, new Date()).returnFrom(router),
+                "ExceptionMapper", () -> when(router.dispatch(any(), eq(resourceContext))).thenThrow(IllegalStateException.class));
+        for (String name : extensions.keySet())
+            tests.add(DynamicTest.dynamicTest(name + " not found", () -> {
+                extensions.get(name).execute();
+                when(providers.getExceptionMapper(eq(NullPointerException.class))).thenReturn(e -> new OutboundResponseBuilder().status(Response.Status.INTERNAL_SERVER_ERROR).build());
+                HttpResponse<String> httpResponse = get("/test");
+                assertEquals(Response.Status.INTERNAL_SERVER_ERROR.getStatusCode(), httpResponse.statusCode());
+
+            }));
+        return tests;
+    }
+
+    @TestFactory
+    public List<DynamicTest> RespondForException() {
+        List<DynamicTest> tests = new ArrayList<>();
+        Map<String, Consumer<Consumer<RuntimeException>>> exceptions = Map.of(
+                "Other Exception", this::otherExceptionTrownFrom,
+                "WebApplicationException", this::webApplicationExceptionThrownFrom);
+        for (Map.Entry<String, Consumer<RuntimeException>> caller : getCallers().entrySet())            for (Map.Entry<String, Consumer<Consumer<RuntimeException>>> exceptionThrownFrom : exceptions.entrySet())                tests.add(DynamicTest.dynamicTest(caller.getKey() + " throws " + exceptionThrownFrom.getKey(),
+            () -> exceptionThrownFrom.getValue().accept(caller.getValue())));
+        return tests;
+    }
+
 
     @ExceptionThrownFrom
     private void providers_getMessageBodyWriter(RuntimeException exception) {
