@@ -203,6 +203,16 @@ public class ResourceDispatcherTest {
         assertEquals("all", entity.getEntity());
     }
 
+    interface UriTemplate {
+        interface MatchResult extends Comparable<MatchResult> {
+            String getMatched();
+            String getRemaining();
+            Map<String, String> getMatchedPathParameters();
+        }
+
+        Optional<MatchResult> match(String path);
+    }
+
     static class Router implements ResourceRouter {
         private Runtime runtime;
         private List<Resource> rootResources;
@@ -215,7 +225,7 @@ public class ResourceDispatcherTest {
         @Override
         public OutboundResponse dispatch(HttpServletRequest request, ResourceContext resourceContext) {
 //            UriInfoBuilder builder = runtime.createUriBuilder(request);
-            ResourceMethod resourceMethod = rootResources.stream().map(root -> root.matches(request.getServletPath(), new String[0], null))
+            ResourceMethod resourceMethod = rootResources.stream().map(root -> root.matches(request.getServletPath(), "GET", new String[0], null))
                     .filter(Optional::isPresent).findFirst().get().get();
 
             try {
@@ -244,10 +254,17 @@ public class ResourceDispatcherTest {
                 methods.put(new URITemplate(pattern, method.getAnnotation(Produces.class).value()),
                         new NormalResourceMethod(resourceClass, method));
             }
+
+            for (Method method : Arrays.stream(resourceClass.getMethods()).filter(m -> m.isAnnotationPresent(Path.class)).toList()) {
+                Path path = method.getAnnotation(Path.class);
+                Pattern pattern = Pattern.compile(this.path + ("(/" + path + ")?"));
+                methods.put(new URITemplate(pattern, method.getAnnotation(Produces.class).value()),
+                        new SubResourceLocator(resourceClass, method, new String[0]));
+            }
         }
 
         @Override
-        public Optional<ResourceMethod> matches(String path, String[] mediaTypes, UriInfoBuilder builder) {
+        public Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
             if (!pattern.matcher(path).matches()) {
                 return Optional.empty();
             }
@@ -277,8 +294,52 @@ public class ResourceDispatcherTest {
         }
     }
 
+    static class SubResourceLocator implements ResourceMethod {
+        private Class<?> resourceClass;
+        private Method method;
+        private String[] mediaTypes;
+
+        public SubResourceLocator(Class<?> resourceClass, Method method, String[] mediaTypes) {
+            this.resourceClass = resourceClass;
+            this.method = method;
+            this.mediaTypes = mediaTypes;
+        }
+
+        @Override
+        public GenericEntity<?> call(ResourceContext resourceContext, UriInfoBuilder builder) {
+            Object resource = resourceContext.getResource(resourceClass);
+            try {
+                Object subResource = method.invoke(resource);
+                return new SubResource(subResource).matches(builder.getUnmatchedPath(),
+                        "GET", mediaTypes, builder).get().call(resourceContext, builder);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    static class SubResource implements Resource {
+
+        private Class<? extends Object> subResourceClass;
+        private Object subResource;
+
+        public SubResource(Object subResource) {
+            this.subResource = subResource;
+            this.subResourceClass = subResource.getClass();
+        }
+
+        @Override
+        public Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
+            return Optional.empty();
+        }
+    }
+
     interface Resource {
-        Optional<ResourceMethod> matches(String path, String[] mediaTypes, UriInfoBuilder builder);
+        Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder);
+    }
+
+    interface RootResource extends Resource {
+        UriTemplate getUriTemplate();
     }
 
     interface ResourceMethod {
@@ -288,6 +349,7 @@ public class ResourceDispatcherTest {
     interface UriInfoBuilder {
         void pushMatchedPath(String path);
         void addParameter(String name, String value);
+        String getUnmatchedPath();
     }
 
     @Path("/users")
@@ -298,13 +360,16 @@ public class ResourceDispatcherTest {
             return "all";
         }
 
-/*
+        @Path("/orders")
+        public Orders getOrders() {
+            return new Orders();
+        }
+    }
+
+    static class Orders {
         @GET
-        @Path("{id}")
-        @Produces(MediaType.TEXT_HTML)
-        public String asHTML(@PathParam("id") int id) {
+        public String asText() {
             return "all";
         }
-*/
     }
 }
