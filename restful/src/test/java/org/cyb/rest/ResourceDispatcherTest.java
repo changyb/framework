@@ -18,7 +18,8 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -27,6 +28,12 @@ public class ResourceDispatcherTest {
     private RuntimeDelegate delegate;
 
     private Runtime runtime;
+
+    private HttpServletRequest request;
+
+    private ResourceContext context;
+
+    private UriInfoBuilder builder;
 
     @BeforeEach
     public void before() {
@@ -187,9 +194,43 @@ public class ResourceDispatcherTest {
             }
         });
 
+        request = mock(HttpServletRequest.class);
+        context = mock(ResourceContext.class);
+        when(request.getServletPath()).thenReturn("/users");
+        when(request.getMethod()).thenReturn("GET");
+        when(request.getHeaders(eq(HttpHeaders.ACCEPT))).thenReturn(
+          new Vector<>(List.of(MediaType.WILDCARD)).elements()
+        );
+
+        builder = mock(UriInfoBuilder.class);
+        when(runtime.createUriInfoBuilder(same(request))).thenReturn(builder);
     }
 
     @Test
+    public void should_use_matched_root_resource() {
+        ResourceRouter.RootResource matched = mock(ResourceRouter.RootResource.class);
+        UriTemplate matchedUriTemplate = mock(UriTemplate.class);
+        UriTemplate.MatchResult result = mock(UriTemplate.MatchResult.class);
+        when(matched.getUriTemplate()).thenReturn(matchedUriTemplate);
+        when(matchedUriTemplate.match(eq("/users"))).thenReturn(Optional.of(result));
+        ResourceRouter.ResourceMethod method = mock(ResourceRouter.ResourceMethod.class);
+        when(matched.matches(eq("/users"), eq("GET"),
+                eq(new String[]{MediaType.WILDCARD}), eq(builder))).thenReturn(Optional.of(method));
+        GenericEntity entity = new GenericEntity("matched", String.class);
+        when(method.call(any(), any())).thenReturn(entity);
+
+        ResourceRouter.RootResource unmatched = mock(ResourceRouter.RootResource.class);
+        UriTemplate unmatchedUriTemplate = mock(UriTemplate.class);
+        when(unmatched.getUriTemplate()).thenReturn(unmatchedUriTemplate);
+        when(unmatchedUriTemplate.match(eq("/users"))).thenReturn(Optional.empty());
+
+        DefaultResourceRouter router = new DefaultResourceRouter(runtime, List.of(matched, unmatched));
+        OutboundResponse response = router.dispatch(request, context);
+        assertSame(entity, response.getGenericEntity());
+        assertEquals(200, response.getStatus());
+    }
+
+    /*@Test
     public void should() {
         HttpServletRequest request = mock(HttpServletRequest.class);
         ResourceContext context = mock(ResourceContext.class);
@@ -201,16 +242,6 @@ public class ResourceDispatcherTest {
         OutboundResponse response = router.dispatch(request, context);
         GenericEntity<String> entity = (GenericEntity<String>)response.getEntity();
         assertEquals("all", entity.getEntity());
-    }
-
-    interface UriTemplate {
-        interface MatchResult extends Comparable<MatchResult> {
-            String getMatched();
-            String getRemaining();
-            Map<String, String> getMatchedPathParameters();
-        }
-
-        Optional<MatchResult> match(String path);
     }
 
     static class Router implements ResourceRouter {
@@ -237,11 +268,11 @@ public class ResourceDispatcherTest {
         }
     }
 
-    static class ResourceClass implements Resource {
+    static class ResourceClass implements ResourceRouter.Resource {
         private Pattern pattern;
         private String path;
         private Class<?> resourceClass;
-        private Map<URITemplate, ResourceMethod> methods = new HashMap<>();
+        private Map<URITemplate, ResourceRouter.ResourceMethod> methods = new HashMap<>();
 
         record URITemplate(Pattern uri, String[] mediaType){}
 
@@ -264,7 +295,7 @@ public class ResourceDispatcherTest {
         }
 
         @Override
-        public Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
+        public Optional<ResourceRouter.ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
             if (!pattern.matcher(path).matches()) {
                 return Optional.empty();
             }
@@ -274,7 +305,7 @@ public class ResourceDispatcherTest {
         }
     }
 
-    static class NormalResourceMethod implements ResourceMethod {
+    static class NormalResourceMethod implements ResourceRouter.ResourceMethod {
         private Class<?> resourceClass;
         private Method method;
 
@@ -294,7 +325,7 @@ public class ResourceDispatcherTest {
         }
     }
 
-    static class SubResourceLocator implements ResourceMethod {
+    static class SubResourceLocator implements ResourceRouter.ResourceMethod {
         private Class<?> resourceClass;
         private Method method;
         private String[] mediaTypes;
@@ -318,7 +349,7 @@ public class ResourceDispatcherTest {
         }
     }
 
-    static class SubResource implements Resource {
+    static class SubResource implements ResourceRouter.Resource {
 
         private Class<? extends Object> subResourceClass;
         private Object subResource;
@@ -329,27 +360,9 @@ public class ResourceDispatcherTest {
         }
 
         @Override
-        public Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
+        public Optional<ResourceRouter.ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder) {
             return Optional.empty();
         }
-    }
-
-    interface Resource {
-        Optional<ResourceMethod> matches(String path, String method, String[] mediaTypes, UriInfoBuilder builder);
-    }
-
-    interface RootResource extends Resource {
-        UriTemplate getUriTemplate();
-    }
-
-    interface ResourceMethod {
-        GenericEntity<?> call(ResourceContext resourceContext, UriInfoBuilder builder);
-    }
-
-    interface UriInfoBuilder {
-        void pushMatchedPath(String path);
-        void addParameter(String name, String value);
-        String getUnmatchedPath();
     }
 
     @Path("/users")
@@ -371,5 +384,5 @@ public class ResourceDispatcherTest {
         public String asText() {
             return "all";
         }
-    }
+    }*/
 }
