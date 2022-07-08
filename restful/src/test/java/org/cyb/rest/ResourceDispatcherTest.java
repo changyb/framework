@@ -1,9 +1,6 @@
 package org.cyb.rest;
 
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.container.ResourceContext;
 import jakarta.ws.rs.core.*;
 import jakarta.ws.rs.ext.RuntimeDelegate;
@@ -12,10 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.lang.annotation.Annotation;
-import java.lang.reflect.Method;
 import java.net.URI;
 import java.util.*;
-import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -196,7 +191,7 @@ public class ResourceDispatcherTest {
 
         request = mock(HttpServletRequest.class);
         context = mock(ResourceContext.class);
-        when(request.getServletPath()).thenReturn("/users");
+        when(request.getServletPath()).thenReturn("/users/1");
         when(request.getMethod()).thenReturn("GET");
         when(request.getHeaders(eq(HttpHeaders.ACCEPT))).thenReturn(
           new Vector<>(List.of(MediaType.WILDCARD)).elements()
@@ -208,26 +203,100 @@ public class ResourceDispatcherTest {
 
     @Test
     public void should_use_matched_root_resource() {
-        ResourceRouter.RootResource matched = mock(ResourceRouter.RootResource.class);
-        UriTemplate matchedUriTemplate = mock(UriTemplate.class);
-        UriTemplate.MatchResult result = mock(UriTemplate.MatchResult.class);
-        when(matched.getUriTemplate()).thenReturn(matchedUriTemplate);
-        when(matchedUriTemplate.match(eq("/users"))).thenReturn(Optional.of(result));
-        ResourceRouter.ResourceMethod method = mock(ResourceRouter.ResourceMethod.class);
-        when(matched.matches(eq("/users"), eq("GET"),
-                eq(new String[]{MediaType.WILDCARD}), eq(builder))).thenReturn(Optional.of(method));
         GenericEntity entity = new GenericEntity("matched", String.class);
-        when(method.call(any(), any())).thenReturn(entity);
 
-        ResourceRouter.RootResource unmatched = mock(ResourceRouter.RootResource.class);
-        UriTemplate unmatchedUriTemplate = mock(UriTemplate.class);
-        when(unmatched.getUriTemplate()).thenReturn(unmatchedUriTemplate);
-        when(unmatchedUriTemplate.match(eq("/users"))).thenReturn(Optional.empty());
-
-        DefaultResourceRouter router = new DefaultResourceRouter(runtime, List.of(matched, unmatched));
+        DefaultResourceRouter router = new DefaultResourceRouter(runtime, List.of(
+                rootResource(matched("/users/1", result("/1")), returns(entity)),
+                rootResource(unmatched("/users/1"))));
         OutboundResponse response = router.dispatch(request, context);
-        assertSame(entity, response.getGenericEntity());
-        assertEquals(200, response.getStatus());
+        assertSame(entity, response.getEntity());
+//        assertEquals(200, response.getStatus());
+    }
+
+    @Test
+    public void should_sort_matched_root_resource_descending_order() {
+        GenericEntity entity1 = new GenericEntity("1", String.class);
+        GenericEntity entity2 = new GenericEntity("2", String.class);
+
+        ResourceRouter router = new DefaultResourceRouter(runtime, List.of(
+                rootResource(matched("/users/1", result("/1", 2)), returns(entity2)),
+                rootResource(matched("/users/1", result("/1", 1)), returns(entity1))
+        ));
+
+        OutboundResponse response = router.dispatch(request, context);
+
+        assertSame(entity1, response.getEntity());
+    }
+
+    private ResourceRouter.RootResource rootResource(UriTemplate unmatchedUriTemplate) {
+        ResourceRouter.RootResource unmatched = mock(ResourceRouter.RootResource.class);
+        when(unmatched.getUriTemplate()).thenReturn(unmatchedUriTemplate);
+        return unmatched;
+    }
+
+    private UriTemplate unmatched(String path) {
+        UriTemplate unmatchedUriTemplate = mock(UriTemplate.class);
+        when(unmatchedUriTemplate.match(eq(path))).thenReturn(Optional.empty());
+        return unmatchedUriTemplate;
+    }
+
+    private ResourceRouter.RootResource rootResource(UriTemplate matchedUriTemplate, ResourceRouter.ResourceMethod method) {
+        ResourceRouter.RootResource matched = mock(ResourceRouter.RootResource.class);
+        when(matched.getUriTemplate()).thenReturn(matchedUriTemplate);
+        when(matched.matches(eq("/1"), eq("GET"),
+                eq(new String[]{MediaType.WILDCARD}), eq(builder))).thenReturn(Optional.of(method));
+        return matched;
+    }
+
+    private ResourceRouter.ResourceMethod returns(GenericEntity entity) {
+        ResourceRouter.ResourceMethod method = mock(ResourceRouter.ResourceMethod.class);
+        when(method.call(same(context), same(builder))).thenReturn(entity);
+        return method;
+    }
+
+    private UriTemplate matched(String path, UriTemplate.MatchResult result) {
+        UriTemplate matchedUriTemplate = mock(UriTemplate.class);
+        when(matchedUriTemplate.match(eq(path))).thenReturn(Optional.of(result));
+        return matchedUriTemplate;
+    }
+
+    private UriTemplate.MatchResult result(String path) {
+        return new FakeMatchResult(path, 0);
+    }
+
+    private UriTemplate.MatchResult result(String path, Integer order) {
+        return new FakeMatchResult(path, order);
+    }
+
+    class FakeMatchResult implements UriTemplate.MatchResult {
+        private String remaining;
+
+        private Integer order;
+
+        public FakeMatchResult(String remaining, Integer order) {
+            this.remaining = remaining;
+            this.order = order;
+        }
+
+        @Override
+        public String getMatched() {
+            return null;
+        }
+
+        @Override
+        public String getRemaining() {
+            return remaining;
+        }
+
+        @Override
+        public Map<String, String> getMatchedPathParameters() {
+            return null;
+        }
+
+        @Override
+        public int compareTo(UriTemplate.MatchResult o) {
+            return order.compareTo(((FakeMatchResult)o).order);
+        }
     }
 
     /*@Test

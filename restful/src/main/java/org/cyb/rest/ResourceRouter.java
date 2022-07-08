@@ -42,19 +42,23 @@ class DefaultResourceRouter implements ResourceRouter {
 
         UriInfoBuilder uri = runtime.createUriInfoBuilder(request);
 
-        Optional<RootResource> matched = rootResources.stream().map(resource -> new Result(resource.getUriTemplate().match(path),
+        Optional<Result> matched = rootResources.stream().map(resource -> new Result(resource.getUriTemplate().match(path),
                         resource)).filter(result -> result.matched.isPresent())
-                .map(Result::resource)
+                .sorted()
                 .findFirst();
 
-        Optional<ResourceMethod> resourceMethod = matched.flatMap(resource -> resource.matches(path, request.getMethod(),
+        Optional<ResourceMethod> resourceMethod = matched.flatMap(result -> result.resource.matches(result.matched.get().getRemaining(), request.getMethod(),
                 Collections.list(request.getHeaders(HttpHeaders.ACCEPT)).toArray(String[]::new),
                 uri));
 
-        GenericEntity<?> entity = resourceMethod.map(m -> m.call(resourceContext, uri)).get();
+        GenericEntity entity = resourceMethod.map(m -> m.call(resourceContext, uri)).get();
         return (OutboundResponse) Response.ok(entity).build();
     }
 
-    record Result(Optional<UriTemplate.MatchResult> matched, RootResource resource) {
+    record Result(Optional<UriTemplate.MatchResult> matched, RootResource resource) implements Comparable<Result> {
+        @Override
+        public int compareTo(Result o) {
+            return matched.get().compareTo(o.matched.get());
+        }
     }
 }
