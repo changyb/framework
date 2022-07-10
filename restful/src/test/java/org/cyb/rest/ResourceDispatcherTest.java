@@ -12,8 +12,7 @@ import java.lang.annotation.Annotation;
 import java.net.URI;
 import java.util.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -43,6 +42,7 @@ public class ResourceDispatcherTest {
             public Response build() {
                 OutboundResponse response = Mockito.mock(OutboundResponse.class);
                 when(response.getEntity()).thenReturn(entity);
+                when(response.getStatus()).thenReturn(status);
                 return response;
             }
 
@@ -52,8 +52,9 @@ public class ResourceDispatcherTest {
             }
 
             @Override
-            public Response.ResponseBuilder status(int i) {
-                return null;
+            public Response.ResponseBuilder status(int status) {
+                this.status = status;
+                return this;
             }
 
             @Override
@@ -228,9 +229,47 @@ public class ResourceDispatcherTest {
         assertSame(entity1, response.getEntity());
     }
 
-    private ResourceRouter.RootResource rootResource(UriTemplate unmatchedUriTemplate) {
+    @Test
+    public void should_return_404_if_no_root_resource_matched() {
+        ResourceRouter router = new DefaultResourceRouter(runtime, List.of(
+                rootResource(unmatched("/users/1"))
+        ));
+
+        OutboundResponse response = router.dispatch(request, context);
+
+        assertNull(response.getGenericEntity());
+        assertEquals(404, response.getStatus());
+    }
+
+    @Test
+    public void should_return_404_if_no_resource_method_found() {
+        DefaultResourceRouter router = new DefaultResourceRouter(runtime, List.of(
+                rootResource(matched("/users/1", result("/1", 2)))
+        ));
+
+        OutboundResponse response = router.dispatch(request, context);
+        assertNull(response.getGenericEntity());
+        assertEquals(404, response.getStatus());
+    }
+
+    @Test
+    public void should_return_204_if_method_return_null() {
+        DefaultResourceRouter router = new DefaultResourceRouter(runtime, List.of(
+                rootResource(matched("/users/1", result("/1", 2)),
+                        returns(null))
+        ));
+
+        OutboundResponse response = router.dispatch(request, context);
+        assertNull(response.getGenericEntity());
+        assertEquals(204, response.getStatus());
+
+    }
+
+    private ResourceRouter.RootResource rootResource(UriTemplate uriTemplate) {
         ResourceRouter.RootResource unmatched = mock(ResourceRouter.RootResource.class);
-        when(unmatched.getUriTemplate()).thenReturn(unmatchedUriTemplate);
+        when(unmatched.getUriTemplate()).thenReturn(uriTemplate);
+        when(unmatched.matches(eq("/1"), eq("GET"),
+                eq(new String[]{MediaType.WILDCARD}), eq(builder))).thenReturn(Optional.empty());
         return unmatched;
     }
 
