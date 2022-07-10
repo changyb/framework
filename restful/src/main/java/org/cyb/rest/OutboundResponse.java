@@ -1,11 +1,11 @@
 package org.cyb.rest;
 
 import jakarta.ws.rs.core.GenericEntity;
-import org.eclipse.jetty.http.HttpTester;
+import jakarta.ws.rs.core.Response;
 
 import java.lang.annotation.Annotation;
 
-public abstract class OutboundResponse extends HttpTester.Response {
+public abstract class OutboundResponse extends Response {
 
     abstract GenericEntity getGenericEntity();
 

@@ -38,12 +38,16 @@ public abstract class ServletTest {
     protected abstract Servlet getServlet();
 
     protected URI path(String path) throws Exception {
-        return new URL(new URL("https://localhost:8080/"), path).toURI();
+        return new URL(new URL("http://localhost:8080/"), path).toURI();
     }
 
-    protected HttpResponse<String> get(String path) throws Exception {
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder(path(path)).GET().build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+    protected HttpResponse<String> get(String path) {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder(path(path)).GET().build();
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
     }
 }
