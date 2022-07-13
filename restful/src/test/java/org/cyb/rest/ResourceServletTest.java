@@ -193,7 +193,9 @@ class ResourceServletTest extends ServletTest {
         Map<String, Consumer<Consumer<RuntimeException>>> exceptions = Map.of(
                 "Other Exception", this::otherExceptionTrownFrom,
                 "WebApplicationException", this::webApplicationExceptionThrownFrom);
-        for (Map.Entry<String, Consumer<RuntimeException>> caller : getCallers().entrySet())            for (Map.Entry<String, Consumer<Consumer<RuntimeException>>> exceptionThrownFrom : exceptions.entrySet())                tests.add(DynamicTest.dynamicTest(caller.getKey() + " throws " + exceptionThrownFrom.getKey(),
+        for (Map.Entry<String, Consumer<RuntimeException>> caller : getCallers().entrySet())
+            for (Map.Entry<String, Consumer<Consumer<RuntimeException>>> exceptionThrownFrom : exceptions.entrySet())
+                tests.add(DynamicTest.dynamicTest(caller.getKey() + " throws " + exceptionThrownFrom.getKey(),
             () -> exceptionThrownFrom.getValue().accept(caller.getValue())));
         return tests;
     }
